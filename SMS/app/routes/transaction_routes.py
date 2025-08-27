@@ -49,7 +49,6 @@ def create_phone(request: dict, db: Session = Depends(get_db)):
     run_date = request.get("run_date")
     phone = import_jobs_from_csv(file_path, file_name,run_date)
     return dict(
-        message="success",
         data = phone
     )
 

@@ -16,21 +16,23 @@ def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
             has_data = False
             imported_count = 0
             skipped_count = 0
+            phoneExists = []
 
             for row in reader:
                 has_data = True
                 sdt = row.get("sdt")
 
-                # validate số điện thoại
-                if not sdt:
-                    print("Bỏ qua dòng vì không có số điện thoại:", row)
-                    skipped_count += 1
-                    continue
+                # # validate số điện thoại
+                # if not sdt:
+                #     print("Bỏ qua dòng vì không có số điện thoại:", row)
+                #     skipped_count += 1
+                #     continue
 
                 # kiểm tra số điện thoại đã tồn tại
-                phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=sdt).first()
+                phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=sdt)
                 if phoneCheckInfo_exists is not None:
                     print(f"Số điện thoại {sdt} đã tồn tại, bỏ qua")
+                    phoneExists.append(sdt)
                     skipped_count += 1
                     continue
 
@@ -48,6 +50,11 @@ def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
 
             if has_data:
                 session.commit()
+                if phoneExists:
+                    return {
+                        "success": False,
+                        "message": f"Số điện thoại đã tồn tại: {phoneExists}",
+                    }
                 return {
                     "success": True,
                     "imported": imported_count,
