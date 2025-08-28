@@ -29,11 +29,10 @@ def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
                 #     continue
 
                 # kiểm tra số điện thoại đã tồn tại
-                phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=sdt)
-                if phoneCheckInfo_exists is not None:
+                phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=sdt).first()
+                if phoneCheckInfo_exists:
                     print(f"Số điện thoại {sdt} đã tồn tại, bỏ qua")
                     phoneExists.append(sdt)
-                    skipped_count += 1
                     continue
 
                 # tạo mới record
@@ -55,11 +54,12 @@ def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
                         "success": False,
                         "message": f"Số điện thoại đã tồn tại: {phoneExists}",
                     }
-                return {
-                    "success": True,
-                    "imported": imported_count,
-                    "skipped": skipped_count
-                }
+                else:
+                    return {
+                        "success": True,
+                        "imported": imported_count,
+                        "skipped": skipped_count
+                    }
             return {
                 "success": False,
                 "message": "File CSV không có dữ liệu"
