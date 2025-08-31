@@ -7,20 +7,16 @@ from app.database import SessionLocal
 from app.models.PhoneCheckInfo import PhoneCheckInfo
 
 
-def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
+def import_jobs_from_csv(phone: list, file_name: str, run_date: datetime):
     session = SessionLocal()
     try:
-        with open(file_path, newline="", encoding="utf-8-sig") as csv_file:
-            reader = csv.DictReader(csv_file)
-            next(reader, None)
             has_data = False
             imported_count = 0
             skipped_count = 0
             phoneExists = []
 
-            for row in reader:
+            for sdt in phone:
                 has_data = True
-                sdt = row.get("sdt")
 
                 # # validate số điện thoại
                 # if not sdt:
@@ -52,6 +48,7 @@ def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
                 if phoneExists:
                     return {
                         "success": False,
+                        "status": "phoneExists",
                         "message": f"Số điện thoại đã tồn tại: {phoneExists}",
                     }
                 else:
@@ -62,6 +59,7 @@ def import_jobs_from_csv(file_path: str, file_name: str, run_date: datetime):
                     }
             return {
                 "success": False,
+                "status": "noData",
                 "message": "File CSV không có dữ liệu"
             }
 
