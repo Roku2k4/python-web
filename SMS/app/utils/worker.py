@@ -131,7 +131,7 @@ def check_transaction_status():
         job_check = session.query(PhoneCheckInfo).filter(PhoneCheckInfo.sdt == job.phone).first()
         if job_check != None:
             if job_check.run_date <= job.transaction_date <= job_check.run_date + timedelta(days=34) and job_check.is_update == 0:
-                job_check.is_update = 1
+                job_check.is_update = True
                 session.commit()
     session.close()
     return None
@@ -141,7 +141,7 @@ def process_jobs1():
     session = SessionLocal()
     now = datetime.now()
     jobs = session.query(PhoneCheckInfo).filter(
-        PhoneCheckInfo.is_update == 0,
+        PhoneCheckInfo.is_update == False,
         PhoneCheckInfo.run_date <= now
     ).all()
 
@@ -173,7 +173,7 @@ def process_jobs1():
             session.rollback()
 
     jobs2 = session.query(PhoneCheckInfo).filter(
-        PhoneCheckInfo.is_update == 1,
+        PhoneCheckInfo.is_update == True,
     ).all()
 
     for job2 in jobs2:
@@ -252,18 +252,10 @@ def process_jobs2():
 
     session.close()
 
-def has_new_data():
-    with SessionLocal() as session:
-        last_import_date = session.execute(
-            text("SELECT MAX(import_date) FROM phone_check_info")
-        ).scalar()
-    if last_import_date >= datetime.now() - timedelta(minutes=1):
-        return True
-    return False
 
 
-def schedule_jobs(scheduler):
-    print(" Reset lại job1 và job2")
+def schedule_jobs(scheduler: BackgroundScheduler):
+    print("Bắt đầu nhận job")
 
     scheduler.remove_all_jobs()  # xoá job cũ
 
@@ -287,16 +279,3 @@ def schedule_jobs(scheduler):
         replace_existing=True,
     )
 
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-schedule_jobs(scheduler)
-
-try:
-    while True:
-        time.sleep(20)
-        if has_new_data():
-            print(" Có dữ liệu mới → reset job1, job2")
-            schedule_jobs(scheduler)
-except KeyboardInterrupt:
-    scheduler.shutdown()
