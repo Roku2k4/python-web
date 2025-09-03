@@ -1,4 +1,6 @@
 # worker.py
+import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -14,6 +16,7 @@ from sqlalchemy.sql import text
 from app.database import SessionLocal
 from app.models.PhoneCheckInfo import PhoneCheckInfo, PhoneCheckStatus
 from app.models.Transactions import Transaction
+from app.models.CallLog import CallLog
 
 app = FastAPI()
 
@@ -137,7 +140,7 @@ def check_transaction_status():
     return None
 
 
-def process_jobs1():
+def process_jobs1(scheduler: BackgroundScheduler):
     session = SessionLocal()
     now = datetime.now()
     jobs = session.query(PhoneCheckInfo).filter(
@@ -145,12 +148,10 @@ def process_jobs1():
         PhoneCheckInfo.run_date <= now
     ).all()
 
-
-
     for job in jobs:
         try:
             if (job.run_date + timedelta(days=14)).date() == now.date():
-                if now.hour == 17:
+                if now.hour == 23:
                     job.status = "LOCK_1C"
                     provisioning_service(job.sdt,"oc","off","khóa 1 chiều")
                     session.commit()
@@ -171,6 +172,45 @@ def process_jobs1():
         except Exception as e:
             print("Lỗi khi xử lý job1:", e)
             session.rollback()
+            # Đếm số lần đã có trong CallLog với sdt
+            # Ghi log lỗi
+            log_session = SessionLocal()
+            try:
+                log = log_session.query(CallLog).filter(
+                    CallLog.sdt == job.sdt
+                ).order_by(CallLog.id.desc()).first()
+
+                if log:
+                    log.call_count += 1
+                    log.action_time = now
+                    log.status = "FAILED"
+                    log.response = str(e)
+                else:
+                    log = CallLog(
+                        sdt=job.sdt,
+                        action_time=now,
+                        status="FAILED",
+                        response=str(e),
+                        call_count=1
+                    )
+                    log_session.add(log)
+                log_session.commit()
+                # Kiểm tra nếu có số nào call_count == 5 thì dừng toàn bộ
+                stop_number = log_session.query(CallLog).filter(CallLog.call_count >= 2).first()
+                if stop_number:
+                    print(f" Số {stop_number.sdt} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
+                    log_session.close()
+                    session.close()
+                    scheduler.remove_all_jobs()
+                    print("hủy kèo")
+                # Ngủ 30 giây trước khi tiếp tục vòng lặp
+                time.sleep(30)
+            except Exception as log_err:
+                print("Lỗi khi ghi CallLog:", log_err)
+                log_session.rollback()
+            finally:
+                log_session.close()
+
 
     jobs2 = session.query(PhoneCheckInfo).filter(
         PhoneCheckInfo.is_update == True,
@@ -264,6 +304,7 @@ def schedule_jobs(scheduler: BackgroundScheduler):
         CronTrigger(second="*/3"),
         id="job1",
         replace_existing=True,
+        args=[scheduler],
     )
     scheduler.add_job(
         check_transaction_status,
