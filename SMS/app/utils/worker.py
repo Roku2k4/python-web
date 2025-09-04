@@ -1,22 +1,19 @@
 # worker.py
-import os
-import sys
+import random
 import threading
 import time
 from datetime import datetime
 from datetime import timedelta
-import random
-
+from sqlalchemy import func
+import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
-import requests
-from sqlalchemy.sql import text
 
 from app.database import SessionLocal
+from app.models.CallLog import CallLog
 from app.models.PhoneCheckInfo import PhoneCheckInfo, PhoneCheckStatus
 from app.models.Transactions import Transaction
-from app.models.CallLog import CallLog
 
 app = FastAPI()
 
@@ -151,11 +148,10 @@ def process_jobs1(scheduler: BackgroundScheduler):
     for job in jobs:
         try:
             if (job.run_date + timedelta(days=14)).date() == now.date():
-                if now.hour == 23:
+                if now.hour == 17:
                     job.status = "LOCK_1C"
                     provisioning_service(job.sdt,"oc","off","khóa 1 chiều")
                     session.commit()
-
 
             elif (job.run_date + timedelta(days=29)).date() == now.date():
                 if now.hour == 17:
@@ -165,45 +161,33 @@ def process_jobs1(scheduler: BackgroundScheduler):
 
             elif (job.run_date + timedelta(days=34)).date() == now.date():
                 if now.hour == 17:
-                    # gọi hàm thu hồi
                     job.status = "REPROCESS"
                     reprocess_service(job.sdt, "ly do huy thue bao")
                     session.commit()
         except Exception as e:
-            print("Lỗi khi xử lý job1:", e)
-            session.rollback()
-            # Đếm số lần đã có trong CallLog với sdt
-            # Ghi log lỗi
             log_session = SessionLocal()
             try:
-                log = log_session.query(CallLog).filter(
-                    CallLog.sdt == job.sdt
-                ).order_by(CallLog.id.desc()).first()
-
-                if log:
-                    log.call_count += 1
-                    log.action_time = now
-                    log.status = "FAILED"
-                    log.response = str(e)
-                else:
-                    log = CallLog(
-                        sdt=job.sdt,
-                        action_time=now,
-                        status="FAILED",
-                        response=str(e),
-                        call_count=1
-                    )
-                    log_session.add(log)
+                log = CallLog(
+                    sdt=job.sdt,
+                    action_time=now,
+                    status="FAILED",
+                    response=str(e),
+                )
+                log_session.add(log)
                 log_session.commit()
                 # Kiểm tra nếu có số nào call_count == 5 thì dừng toàn bộ
-                stop_number = log_session.query(CallLog).filter(CallLog.call_count >= 2).first()
-                if stop_number:
-                    print(f" Số {stop_number.sdt} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
+                stop_number = log_session.query(func.count(CallLog.response)).filter(
+                    CallLog.response == log.response).scalar()
+                print("stop_number = ", stop_number)
+                if stop_number >= 5:
+                    print(f" {str(e)} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
                     log_session.close()
                     session.close()
                     scheduler.remove_all_jobs()
-                    print("hủy kèo")
+                    print("hủy lịch")
+                    return
                 # Ngủ 30 giây trước khi tiếp tục vòng lặp
+                print(f"Lỗi xảy ra, nghỉ 30 giây trước khi tiếp tục...")
                 time.sleep(30)
             except Exception as log_err:
                 print("Lỗi khi ghi CallLog:", log_err)
@@ -242,7 +226,7 @@ def random_time(time_start: int, time_end: int):
     random_times = start + timedelta(seconds=random_seconds)
     return random_times
 
-def process_jobs2():
+def process_jobs2(scheduler: BackgroundScheduler):
     session = SessionLocal()
     now = datetime.now()
     jobs = session.query(PhoneCheckInfo).filter(
@@ -252,14 +236,15 @@ def process_jobs2():
 
     for job in jobs:
         try:
-            if(job.status == PhoneCheckStatus.UPDATED and job.run_date <= now <= job.run_date + timedelta(days=29)):
+            if (job.status == PhoneCheckStatus.UPDATED and job.run_date <= now <= job.run_date + timedelta(days=29)):
                 continue
 
-            elif(job.is_update == False):
-                if(job.run_date <= now <= job.run_date + timedelta(days=4) or job.run_date + timedelta(days=12) <= now <= job.run_date + timedelta(days=14)):
-                    rand_time = random_time(8, 10)
-                    # rand_time = datetime.now().replace(hour=11, minute=9, second=1, microsecond=0)
-                    delay = (rand_time - now).total_seconds()
+            elif (job.is_update == False):
+                if (job.run_date <= now <= job.run_date + timedelta(days=4) or job.run_date + timedelta(
+                        days=12) <= now <= job.run_date + timedelta(days=14)):
+                    # rand_time = random_time(8, 10)
+                    # delay = (rand_time - now).total_seconds()
+                    delay = 0
                     message = f"""
                       SIM của quý khách sẽ tạm khóa 1 chiều từ ngày {job.run_date + timedelta(days=14)} do sim của Quý khách chưa cập nhật thông tin chính chủ.
                       Vui lòng cập nhật thông tin qua một trong các hình thức sau để không bị gián đoạn dịch vụ:
@@ -267,32 +252,62 @@ def process_jobs2():
                     - Liên hệ CSKH qua Zalo Mạng di động iTel: https://zalo.me/itelvn
                     - Quý khách đã cập nhật thông tin chính chủ vui lòng bỏ qua tin nhắn. CSKH: Gọi 0877087087 (0đ).
                     Trân trọng!"""
-                    if delay > 0:
-                        print(f"[SCHEDULE] Tạo Timer sau {delay:.2f} giây để gửi SMS cho {job.sdt} lúc {rand_time}")
+                    if delay >= 0:
+                        #print(f"[SCHEDULE] Tạo Timer sau {delay:.2f} giây để gửi SMS cho {job.sdt} lúc {randtime}")
+                        print(f"Đã gửi SMS tới {job.sdt} lúc:, {now.hour}")
                         threading.Timer(delay, send_sms, args=[job.sdt, message]).start()
                     else:
-                        print(f"[SCHEDULE] Thời gian {rand_time} đã qua, không gửi SMS cho {job.sdt}")
+                        # print(f"[SCHEDULE] Thời gian {rand_time} đã qua, không gửi SMS cho {job.sdt}")
+                        print(f"Đã gửi SMS tới {job.sdt} lúc:, {now.hour}")
 
-                if(job.run_date + timedelta(days=27) <= now <= job.run_date + timedelta(days=29)):
-                    if random.choice([True, False]):
-                        rand_time = random_time(8, 10)
-                    else:
-                        rand_time = random_time(13, 16)
-                    # rand_time = datetime.now().replace(hour=9, minute=10, second=0, microsecond=0)
-                    delay = (rand_time - now).total_seconds()
+                if (job.run_date + timedelta(days=27) <= now <= job.run_date + timedelta(days=29)):
+                    # if random.choice([True, False]):
+                    #     rand_time = random_time(8, 10)
+                    # else:
+                    #     rand_time = random_time(13, 16)
+                    # delay = (rand_time - now).total_seconds()
+                    delay = 0
                     message = f"""
                         SIM của Quý khách chưa cập nhật thông tin chính chủ theo quy định, SIM sẽ bị khóa 2 chiều vào ngày {job.run_date + timedelta(days=29)} và thu hồi hoàn toàn, thanh lý hợp đồng sau 05 ngày kể từ ngày khóa 2 chiều.
                         Trân trọng!”"""
                     threading.Timer(delay, send_sms, args=[job.sdt, message]).start()
-                    print(f"Đã gửi SMS tới {job.sdt} lúc:, {rand_time}")
+                    #print(f"Đã gửi SMS tới {job.sdt} lúc:, {rand_time}")
+                    print(f"Đã gửi SMS tới {job.sdt} lúc:, {now.hour}")
 
         except Exception as e:
-            print("Lỗi khi xử lý job2:", e)
-            session.rollback()
-
+            # Đếm số lần đã có trong CallLog với sdt
+            # Ghi log lỗi
+            log_session = SessionLocal()
+            try:
+                log = CallLog(
+                    sdt=job.sdt,
+                    action_time=now,
+                    status="FAILED",
+                    response=str(e),
+                )
+                log_session.add(log)
+                log_session.commit()
+                # Kiểm tra nếu có số nào call_count == 5 thì dừng toàn bộ
+                stop_number = log_session.query(func.count(CallLog.response)).filter(
+                    CallLog.response == log.response).scalar()
+                print("stop_number = ", stop_number)
+                if stop_number >= 5:
+                    print(f" {str(e)} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
+                    log_session.close()
+                    session.close()
+                    scheduler.remove_all_jobs()
+                    print("hủy lịch")
+                    return
+                # Ngủ 30 giây trước khi tiếp tục vòng lặp
+                print(f"Lỗi xảy ra, nghỉ 30 giây trước khi tiếp tục...")
+                time.sleep(30)
+            except Exception as log_err:
+                print("Lỗi khi ghi CallLog:", log_err)
+                log_session.rollback()
+            finally:
+                log_session.close()
+            # session.rollback()
     session.close()
-
-
 
 def schedule_jobs(scheduler: BackgroundScheduler):
     print("Bắt đầu nhận job")
@@ -301,7 +316,7 @@ def schedule_jobs(scheduler: BackgroundScheduler):
 
     scheduler.add_job(
         process_jobs1,
-        CronTrigger(second="*/3"),
+        CronTrigger(second="*/30"),
         id="job1",
         replace_existing=True,
         args=[scheduler],
@@ -314,9 +329,11 @@ def schedule_jobs(scheduler: BackgroundScheduler):
     )
     scheduler.add_job(
         process_jobs2,
-        CronTrigger(hour=7, minute=59),
-        # CronTrigger(second="*/3"),
+        # CronTrigger(hour=7, minute=59),
+        # CronTrigger(minute="*/5"),
+        CronTrigger(second="*/5"),
         id="job2",
         replace_existing=True,
-    )
+        args=[scheduler],
+        )
 

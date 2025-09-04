@@ -1,5 +1,4 @@
-import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.sql.functions import count
 
@@ -9,50 +8,68 @@ from app.models.PhoneCheckInfo import PhoneCheckInfo
 
 def import_jobs_from_csv(phone: list, file_name: str, run_date: datetime):
     session = SessionLocal()
+    if isinstance(run_date, str):
+        run_date = datetime.strptime(run_date, '%Y-%m-%d')  # Adjust format as needed
+
     try:
             has_data = False
             imported_count = 0
             skipped_count = 0
             phoneExists = []
 
+            # for sdt in phone:
+            #     phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=sdt).first()
+            #     if phoneCheckInfo_exists:
+            #         print(f"Số điện thoại {sdt} đã tồn tại, bỏ qua")
+            #         phoneExists.append(sdt)
+            # if phoneExists:
+            #     return {
+            #         "success": False,
+            #         "status": "phoneExists",
+            #         "message": f"Số điện thoại đã tồn tại: {phoneExists}",
+            #     }
+
             for sdt in phone:
                 has_data = True
-
-                # # validate số điện thoại
-                # if not sdt:
-                #     print("Bỏ qua dòng vì không có số điện thoại:", row)
-                #     skipped_count += 1
-                #     continue
-
-                # kiểm tra số điện thoại đã tồn tại
                 phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=sdt).first()
-                if phoneCheckInfo_exists:
+
+                if phoneCheckInfo_exists == None:
+                    phoneCheckInfo = PhoneCheckInfo(
+                        file_name=file_name,
+                        sdt=sdt,
+                        import_date=datetime.now(),
+                        status="PENDING",
+                        is_update=0,
+                        run_date=run_date
+                    )
+                    session.add(phoneCheckInfo)
+                    imported_count += 1
+                elif (phoneCheckInfo_exists.run_date > run_date or phoneCheckInfo_exists.run_date + timedelta(days=34) < run_date):
+                # tạo mới record
+                    phoneCheckInfo = PhoneCheckInfo(
+                        file_name=file_name,
+                        sdt=sdt,
+                        import_date=datetime.now(),
+                        status="PENDING",
+                        is_update=0,
+                        run_date=run_date
+                    )
+                    session.add(phoneCheckInfo)
+                    imported_count += 1
+                elif (phoneCheckInfo_exists.run_date <= run_date <= phoneCheckInfo_exists.run_date + timedelta(days=34)):
                     print(f"Số điện thoại {sdt} đã tồn tại, bỏ qua")
                     phoneExists.append(sdt)
-                    continue
 
-                # tạo mới record
-                phoneCheckInfo = PhoneCheckInfo(
-                    file_name=file_name,
-                    sdt=sdt,
-                    import_date=datetime.now(),
-                    status="PENDING",
-                    is_update=0,
-                    run_date=run_date
-                )
-                session.add(phoneCheckInfo)
-                imported_count += 1
+            if phoneExists:
+                return {
+                    "success": False,
+                    "status": "phoneExists",
+                    "message": f"Số điện thoại đã tồn tại: {phoneExists}, thời gian bắt đầu không",
+                }
 
             if has_data:
                 session.commit()
-                if phoneExists:
-                    return {
-                        "success": False,
-                        "status": "phoneExists",
-                        "message": f"Số điện thoại đã tồn tại: {phoneExists}",
-                    }
-                else:
-                    return {
+                return {
                         "success": True,
                         "imported": imported_count,
                         "skipped": skipped_count
