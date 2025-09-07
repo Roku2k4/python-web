@@ -270,7 +270,7 @@ def process_jobs2(scheduler: BackgroundScheduler):
                     # delay = (rand_time - now).total_seconds()
                     delay = 0
                     message = f"""
-                        SIM của Quý khách chưa cập nhật thông tin chính chủ theo quy định, SIM sẽ bị khóa 2 chiều vào ngày {(t0 + timedelta(days=14)).strftime("%d/%m/%Y")} và thu hồi hoàn toàn, thanh lý hợp đồng sau 05 ngày kể từ ngày khóa 2 chiều.
+                        SIM của Quý khách chưa cập nhật thông tin chính chủ theo quy định, SIM sẽ bị khóa 2 chiều vào ngày {(t0 + timedelta(days=29)).strftime("%d/%m/%Y")} và thu hồi hoàn toàn, thanh lý hợp đồng sau 05 ngày kể từ ngày khóa 2 chiều.
                         Trân trọng!”"""
                     threading.Timer(delay, send_sms, args=[job.sdt, message]).start()
                     #print(f"Đã gửi SMS tới {job.sdt} lúc:, {rand_time}")
