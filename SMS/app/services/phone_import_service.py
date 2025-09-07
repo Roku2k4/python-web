@@ -62,31 +62,22 @@ def import_jobs_from_csv(phone: list, file_name: str, run_date: datetime):
 
             if phoneExists:
                 return {
-                    "success": False,
-                    "status": "phoneExists",
-                    "message": f"Số điện thoại đã tồn tại: {phoneExists}, thời gian bắt đầu không",
+                    "code": 400,
+                    "str" : f"Số điện thoại đã tồn tại: {phoneExists}, thời gian bắt đầu không"
                 }
 
             if has_data:
                 session.commit()
-                return {
-                        "success": True,
-                        "imported": imported_count,
-                        "skipped": skipped_count
-                    }
+                return f"Import file {file_name} thành công"
             return {
-                "success": False,
-                "status": "noData",
-                "message": "File CSV không có dữ liệu"
-            }
+                    "code": 400,
+                    "str" :"File CSV không có dữ liệu"
+                    }
 
     except Exception as e:
         print(f"Error importing jobs from CSV: {e}")
         session.rollback()
-        return {
-            "success": False,
-            "message": str(e)
-        }
+        return { str(e)}
     finally:
         session.close()
 

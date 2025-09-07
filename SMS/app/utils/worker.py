@@ -330,8 +330,8 @@ def schedule_jobs(scheduler: BackgroundScheduler):
     scheduler.add_job(
         process_jobs2,
         # CronTrigger(hour=7, minute=59),
-        # CronTrigger(minute="*/5"),
-        CronTrigger(second="*/5"),
+        CronTrigger(minute="*/5"),
+        # CronTrigger(second="*/5"),
         id="job2",
         replace_existing=True,
         args=[scheduler],
