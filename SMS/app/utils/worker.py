@@ -235,18 +235,20 @@ def process_jobs2(scheduler: BackgroundScheduler):
     ).all()
 
     for job in jobs:
+        t0 = job.run_date.date()
         try:
-            if (job.status == PhoneCheckStatus.UPDATED and job.run_date <= now <= job.run_date + timedelta(days=29)):
+            if (job.status == PhoneCheckStatus.UPDATED and t0 <= now.date() <= t0 + timedelta(days=29)):
                 continue
 
             elif (job.is_update == False):
-                if (job.run_date <= now <= job.run_date + timedelta(days=4) or job.run_date + timedelta(
-                        days=12) <= now <= job.run_date + timedelta(days=14)):
+
+                if (t0 <= now.date() <= t0 + timedelta(days=4) or t0 + timedelta(
+                        days=12) <= now.date() <= t0 + timedelta(days=14)):
                     # rand_time = random_time(8, 10)
                     # delay = (rand_time - now).total_seconds()
                     delay = 0
                     message = f"""
-                      SIM của quý khách sẽ tạm khóa 1 chiều từ ngày {job.run_date + timedelta(days=14)} do sim của Quý khách chưa cập nhật thông tin chính chủ.
+                      SIM của quý khách sẽ tạm khóa 1 chiều từ ngày {(t0 + timedelta(days=14)).strftime("%d/%m/%Y")} do sim của Quý khách chưa cập nhật thông tin chính chủ.
                       Vui lòng cập nhật thông tin qua một trong các hình thức sau để không bị gián đoạn dịch vụ:
                     - Tải App My iTel để cập nhật: https://myitel.onelink.me/1Wbg/download
                     - Liên hệ CSKH qua Zalo Mạng di động iTel: https://zalo.me/itelvn
@@ -260,7 +262,7 @@ def process_jobs2(scheduler: BackgroundScheduler):
                         # print(f"[SCHEDULE] Thời gian {rand_time} đã qua, không gửi SMS cho {job.sdt}")
                         print(f"Đã gửi SMS tới {job.sdt} lúc:, {now.hour}")
 
-                if (job.run_date + timedelta(days=27) <= now <= job.run_date + timedelta(days=29)):
+                if (t0 + timedelta(days=27) <= now.date() <= t0 + timedelta(days=29)):
                     # if random.choice([True, False]):
                     #     rand_time = random_time(8, 10)
                     # else:
@@ -268,7 +270,7 @@ def process_jobs2(scheduler: BackgroundScheduler):
                     # delay = (rand_time - now).total_seconds()
                     delay = 0
                     message = f"""
-                        SIM của Quý khách chưa cập nhật thông tin chính chủ theo quy định, SIM sẽ bị khóa 2 chiều vào ngày {job.run_date + timedelta(days=29)} và thu hồi hoàn toàn, thanh lý hợp đồng sau 05 ngày kể từ ngày khóa 2 chiều.
+                        SIM của Quý khách chưa cập nhật thông tin chính chủ theo quy định, SIM sẽ bị khóa 2 chiều vào ngày {(t0 + timedelta(days=29)).strftime("%d/%m/%Y")} và thu hồi hoàn toàn, thanh lý hợp đồng sau 05 ngày kể từ ngày khóa 2 chiều.
                         Trân trọng!”"""
                     threading.Timer(delay, send_sms, args=[job.sdt, message]).start()
                     #print(f"Đã gửi SMS tới {job.sdt} lúc:, {rand_time}")
