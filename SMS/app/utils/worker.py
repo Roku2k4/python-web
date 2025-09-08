@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 from sqlalchemy import func
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -38,16 +39,26 @@ def provisioning_service(sdt: str, service: str, action: str, comment: str):
         "action": action,
         "comment": comment
     }
+
+    session = SessionLocal()
+    now = datetime.now(ZoneInfo("Asia/Bangkok"))
     try:
         response = requests.post(url, json=payload, headers=headers)
-
-        # parse JSON
         data = response.json()
 
         print("HTTP Status Code:", response.status_code)
         print("API Code:", data.get("code"))
         print("API Message:", data.get("message"))
         print("API Result:", data.get("result"))
+
+        # Ghi log SUCCESS
+        session.add(CallLog(
+            sdt=sdt,
+            action_time=now,
+            status="SUCCESS",
+            response=f"[PROVISIONING] {service}/{action} | http={response.status_code} | code={data.get('code')} | msg={data.get('message')}"
+        ))
+        session.commit()
 
         return {
             "http_status": response.status_code,
@@ -57,6 +68,16 @@ def provisioning_service(sdt: str, service: str, action: str, comment: str):
         }
     except Exception as e:
         print("Lỗi khi gọi API:", e)
+        # Ghi log FAILED
+        session.add(CallLog(
+            sdt=sdt,
+            action_time=now,
+            status="FAILED",
+            response=f"[PROVISIONING] {service}/{action} | error={str(e)}"
+        ))
+        session.commit()
+    finally:
+        session.close()
 
 
 
@@ -73,11 +94,12 @@ def reprocess_service(sdt: str, comment: str):
         "comment": comment
     }
 
+    session = SessionLocal()
+    now = datetime.now(ZoneInfo("Asia/Bangkok"))
     try:
         response = requests.post(url, json=payload, headers=headers)
         print("Status code:", response.status_code)
 
-        # parse JSON thay vì in raw text
         data = response.json()
         print("Code:", data.get("code"))
         print("Message:", data.get("message"))
@@ -86,8 +108,26 @@ def reprocess_service(sdt: str, comment: str):
         print("Result:", data.get("result"))
         print("Extra:", data.get("extra"))
 
+        # Ghi log SUCCESS
+        session.add(CallLog(
+            sdt=sdt,
+            action_time=now,
+            status="SUCCESS",
+            response=f"[REPROCESS] http={response.status_code} | code={data.get('code')} | msg={data.get('message')}"
+        ))
+        session.commit()
     except Exception as e:
         print("Lỗi khi gọi API:", e)
+        # Ghi log FAILED
+        session.add(CallLog(
+            sdt=sdt,
+            action_time=now,
+            status="FAILED",
+            response=f"[REPROCESS] error={str(e)}"
+        ))
+        session.commit()
+    finally:
+        session.close()
 
 
 def send_sms(sdt: str, message: str):
@@ -104,21 +144,43 @@ def send_sms(sdt: str, message: str):
         "Authorization": "Basic aXRlbDplODJkZjY2OGExMTYwZmFmMDBhNDRiMDhkNjczNGY2Yw=="
     }
 
+    session = SessionLocal()
+    now = datetime.now(ZoneInfo("Asia/Bangkok"))
     try:
         response = requests.get(url, params=params, headers=headers)
         data = response.json()
 
-        if isinstance(data, dict):  # Trường hợp API trả về object
+        if isinstance(data, dict):
             print("[SEND_SMS] Object response:", data)
-        elif isinstance(data, list):  # Trường hợp API trả về list
+            summary = f"code={data.get('code')} msg={data.get('message')}"
+        elif isinstance(data, list):
             print("[SEND_SMS] List response:", data)
-            if len(data) > 0:
-                print("[SEND_SMS] ID nhận được:", data[0])  # lấy phần tử đầu tiên
+            summary = f"id={data[0]}" if len(data) > 0 else "list-empty"
         else:
             print("[SEND_SMS] Response không rõ dạng:", data)
+            summary = "no-json/unknown"
 
+        # Ghi log SUCCESS
+        session.add(CallLog(
+            sdt=sdt,
+            action_time=now,
+            status="SUCCESS",
+            response=f"[SMS] sent via 8968 | {summary}"
+        ))
+        session.commit()
     except Exception as e:
         print("[SEND_SMS] Lỗi khi gọi API:", e)
+        # Ghi log FAILED
+        session.add(CallLog(
+            sdt=sdt,
+            action_time=now,
+            status="FAILED",
+            response=f"[SMS] error={str(e)}"
+        ))
+        session.commit()
+    finally:
+        session.close()
+
 
 
 def check_transaction_status():
@@ -130,7 +192,7 @@ def check_transaction_status():
     for job in job_trans:
         job_check = session.query(PhoneCheckInfo).filter(PhoneCheckInfo.sdt == job.phone).first()
         if job_check != None:
-            if job_check.run_date <= job.transaction_date <= job_check.run_date + timedelta(days=34) and job_check.is_update == 0:
+            if job_check.run_date.date() <= job.transaction_date <= job_check.run_date.date() + timedelta(days=34) and job_check.is_update == 0:
                 job_check.is_update = True
                 session.commit()
     session.close()
@@ -139,27 +201,28 @@ def check_transaction_status():
 
 def process_jobs1(scheduler: BackgroundScheduler):
     session = SessionLocal()
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Bangkok"))
     jobs = session.query(PhoneCheckInfo).filter(
         PhoneCheckInfo.is_update == False,
         PhoneCheckInfo.run_date <= now
     ).all()
 
+
     for job in jobs:
         try:
-            if (job.run_date + timedelta(days=14)).date() == now.date():
+            if ((job.run_date + timedelta(days=14)).date() == now.date()) and (job.status== PhoneCheckStatus.PENDING):
                 if now.hour == 17:
                     job.status = "LOCK_1C"
                     provisioning_service(job.sdt,"oc","off","khóa 1 chiều")
                     session.commit()
 
-            elif (job.run_date + timedelta(days=29)).date() == now.date():
+            elif ((job.run_date + timedelta(days=29)).date() == now.date()) and (job.status== PhoneCheckStatus.LOCK_1C):
                 if now.hour == 17:
                     job.status = "LOCK_2C"
                     provisioning_service(job.sdt, "ic", "off", "khóa 2 chiều")
                     session.commit()
 
-            elif (job.run_date + timedelta(days=34)).date() == now.date():
+            elif ((job.run_date + timedelta(days=34)).date() == now.date()) and (job.status== PhoneCheckStatus.LOCK_2C):
                 if now.hour == 17:
                     job.status = "REPROCESS"
                     reprocess_service(job.sdt, "ly do huy thue bao")
@@ -228,7 +291,7 @@ def random_time(time_start: int, time_end: int):
 
 def process_jobs2(scheduler: BackgroundScheduler):
     session = SessionLocal()
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Bangkok"))
     jobs = session.query(PhoneCheckInfo).filter(
         PhoneCheckInfo.is_update == False,
         PhoneCheckInfo.run_date <= now
