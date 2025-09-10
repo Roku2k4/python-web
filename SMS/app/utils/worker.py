@@ -12,7 +12,7 @@ import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
-
+from sqlalchemy import desc
 from app.database import SessionLocal
 from app.models.CallLog import CallLog
 from app.models.PhoneCheckInfo import PhoneCheckInfo, PhoneCheckStatus
@@ -75,7 +75,7 @@ def provisioning_service(sdt: str, service: str, action: str, comment: str):
             sdt=sdt,
             action_time=now,
             status="SUCCESS" if ok else "FAILED",
-            response=f"[PROVISIONING] {service}/{action} | http={http_status} | code={api_code} | msg={api_msg}"
+            response=f"[PROVISIONING] msg was send"
         ))
         session.commit()
 
@@ -87,20 +87,10 @@ def provisioning_service(sdt: str, service: str, action: str, comment: str):
             sdt=sdt,
             action_time=now,
             status="FAILED",
-            response=f"[PROVISIONING] {service}/{action}"
+            response=f"[PROVISIONING] Failed to call API"
         )
         session.add(log)
         session.commit()
-        stop_number = session.query(func.count(CallLog.response)).filter(
-            CallLog.response == log.response,
-            CallLog.sdt == log.sdt,
-            CallLog.action_time >= log.action_time - timedelta(minutes=5)
-        ).scalar()
-        print("stop_number = ", stop_number)
-        if stop_number >= 5:
-            print(f" {str(e)} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
-            session.close()
-            return {"ok": False, "error": str(e), "out": True}
         return {"ok": False, "error": str(e), "out": False}
     finally:
         session.close()
@@ -134,7 +124,7 @@ def reprocess_service(sdt: str, comment: str):
             sdt=sdt,
             action_time=now,
             status="SUCCESS" if ok else "FAILED",
-            response=f"[REPROCESS] msg={api_msg}"
+            response=f"[REPROCESS] msg was send"
         ))
         session.commit()
 
@@ -148,17 +138,7 @@ def reprocess_service(sdt: str, comment: str):
         )
         session.add(log)
         session.commit()
-        stop_number = session.query(func.count(CallLog.response)).filter(
-            CallLog.response == log.response,
-            CallLog.sdt == log.sdt,
-            CallLog.action_time >= log.action_time - timedelta(minutes=5)
-        ).scalar()
-        print("stop_number = ", stop_number)
-        if stop_number >= 5:
-            print(f" {str(e)} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
-            session.close()
-            return {"ok": False, "error": str(e), "out": True}
-        return {"ok": False, "error": str(e), "out": False}
+        return {"ok": False, "error": str(e), "out": True}
     finally:
         session.close()
 
@@ -232,6 +212,22 @@ def check_transaction_status():
     session.close()
     return None
 
+def check_5_fail(session, phone) -> bool:
+    now = datetime.now(ZoneInfo("Asia/Bangkok"))
+    since = now - timedelta(minutes=5)
+    # Lấy 5 bản ghi mới nhất kể từ 'since'
+    logs = (session.query(CallLog)
+            .filter(CallLog.sdt == phone)
+            .filter(CallLog.action_time >= since)
+            .order_by(desc(CallLog.action_time), desc(CallLog.response))
+            .limit(5)
+            .all())
+
+    if len(logs) < 5:
+        return False
+
+    # Nếu cả 5 đều FAILED => dừng
+    return all(log.status == "FAILED" for log in logs)
 
 def process_jobs1(scheduler: BackgroundScheduler): # hàm này tao bao thm một lớp while True để chạy lin tục, kéo xuống exception
 
@@ -245,15 +241,14 @@ def process_jobs1(scheduler: BackgroundScheduler): # hàm này tao bao thm một
     for job in jobs:
         try:
             if (job.run_date + timedelta(days=15)).date() == now.date() and job.status == PhoneCheckStatus.PENDING:
-                if 10 <= now.hour <= 16:
-
-                    check =provisioning_service(job.sdt,"oc","off","QTXLTB có TTTB không đúng QĐ (35)")
-                    if check.get("out") == True:
+                if 10 <= now.hour <= 17:
+                    if check_5_fail(session, job.sdt):
                         session.close()
                         print("hủy lịch do lỗi LOCK 1C 5 lần")
                         scheduler.remove_all_jobs()
                         break
-                    elif check.get("ok")== False:
+                    check =provisioning_service(job.sdt,"oc","off","QTXLTB có TTTB không đúng QĐ (35)")
+                    if check.get("ok")== False:
                         session.close()
                         sleep(30)
                         break
@@ -262,14 +257,13 @@ def process_jobs1(scheduler: BackgroundScheduler): # hàm này tao bao thm một
 
             elif (job.run_date + timedelta(days=30)).date() == now.date() and job.status == PhoneCheckStatus.LOCK_1C:
                 if 10 <= now.hour <= 16:
-
-                    check = provisioning_service(job.sdt, "ic", "off", "QTXLTB có TTTB không đúng QĐ (35)")
-                    if check.get("out") == True:
+                    if check_5_fail(session, job.sdt):
                         session.close()
-                        scheduler.remove_all_jobs()
                         print("hủy lịch do lỗi LOCK 2C 5 lần")
+                        scheduler.remove_all_jobs()
                         break
-                    elif check.get("ok") == False:
+                    check = provisioning_service(job.sdt, "ic", "off", "QTXLTB có TTTB không đúng QĐ (35)")
+                    if check.get("ok") == False:
                         session.close()
                         sleep(30)
                         break
@@ -278,13 +272,13 @@ def process_jobs1(scheduler: BackgroundScheduler): # hàm này tao bao thm một
 
             elif (job.run_date + timedelta(days=35)).date() == now.date() and job.status == PhoneCheckStatus.LOCK_2C:
                 if 10 <= now.hour <= 16:
-                    check = reprocess_service(job.sdt, "QTXLTB có TTTB không đúng QĐ (35)")
-                    if check.get("out") == True:
+                    if check_5_fail(session, job.sdt):
                         session.close()
-                        scheduler.remove_all_jobs()
                         print("hủy lịch do lỗi REPROCESS 5 lần")
+                        scheduler.remove_all_jobs()
                         break
-                    elif check.get("ok")== False:
+                    check = reprocess_service(job.sdt, "QTXLTB có TTTB không đúng QĐ (35)")
+                    if check.get("ok")== False:
                         session.close()
                         sleep(30)
                         break
@@ -302,24 +296,15 @@ def process_jobs1(scheduler: BackgroundScheduler): # hàm này tao bao thm một
                 log_session.add(log)
                 log_session.commit()
                 # Kiểm tra stop_number >=5 thì dừng toàn bộ
-                stop_number = log_session.query(func.count(CallLog.response)).filter(
-                    CallLog.response == log.response,
-                    CallLog.sdt == log.sdt,
-                    CallLog.action_time >= log.action_time - timedelta(minutes=3),
-                    # CallLog.action_time <= log.action_time + timedelta(minutes=2)
-                ).scalar()
-                print("stop_number = ", stop_number)
-                if stop_number >= 5:
-                    print(f" {str(e)} đã bị lỗi 5 lần. Dừng toàn bộ tiến trình.")
-                    log_session.close()
+                if check_5_fail(session, log.sdt):
                     session.close()
+                    print("hủy lịch do lỗi ở hàm process_job1 5 lần")
                     scheduler.remove_all_jobs()
-                    print("hủy lịch do lỗi 5 lần ở hàm process_jobs1")
-                    return
+                    break
                 # Ngủ 30 giây trước khi tiếp tục vòng lặp
                 print(f"Lỗi xảy ra, nghỉ 30 giây trước khi tiếp tục...")
                 time.sleep(30)
-                break # thoát vòng for để chạy lại while True
+                break
             except Exception as log_err:
                 print("Lỗi khi ghi CallLog:", log_err)
                 log_session.rollback()
