@@ -36,21 +36,3 @@ def create_phone(request: dict, db: Session = Depends(get_db)):
     run_date = request.get("run_date")
     phone = import_jobs_from_csv(phone, file_name,run_date)
     return phone
-
-# @router.post("/update")
-# def update_phone(request: dict, db: Session = Depends(get_db)):
-#     session = SessionLocal()
-#     sdt = request.get("sdt")
-#     job_trans = session.query(Transaction.status, Transaction.transaction_date).filter(Transaction.phone == sdt).first()
-#     if job_trans == None:
-#         return "Not found"
-#     job_check = session.query(PhoneCheckInfo).filter(PhoneCheckInfo.sdt == sdt).first()
-#     if job_check == None:
-#         return "Not found"
-#     if job_trans.status == 1 and job_check.run_date <= job_trans.transaction_date <= job_check.run_date + timedelta(
-#             days=34):
-#         job_check.is_update = 1
-#         session.commit()
-#     return dict(
-#         data = job_check.is_update
-#     )

@@ -19,7 +19,7 @@ class PhoneCheckInfo(Base):
 
     file_name = Column(String(100), nullable=False)
     sdt = Column(String(12),primary_key=True, nullable=False)
-    import_date = Column(DateTime, nullable=True, default = datetime.now())
+    import_date = Column(DateTime, nullable=True)
     status = Column(Enum(PhoneCheckStatus), nullable=False, default=PhoneCheckStatus.PENDING)
     is_update = Column(Boolean, default=False)   # tinyint(1) -> Boolean
     run_date = Column(DateTime, nullable=True)
