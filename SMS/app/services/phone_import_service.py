@@ -9,66 +9,70 @@ from app.utils.worker import convert_phone_number
 def import_jobs_from_csv(phone: list, file_name: str, run_date: datetime):
     session = SessionLocal()
     if isinstance(run_date, str):
-        run_date = datetime.strptime(run_date, '%Y-%m-%d')  # Adjust format as needed
+        run_date = datetime.strptime(run_date, '%Y-%m-%d')  # Chuyển chuỗi thành datetime nếu cần
 
     try:
-            has_data = False
-            imported_count = 0
-            skipped_count = 0
-            phoneExists = []
+        has_data = False
+        imported_count = 0
+        skipped_count = 0
+        duplicate_in_file = set()  # Lưu các số trùng trong file
+        seen_numbers = set()       # Lưu các số đã gặp
 
-            for sdt in phone:
-                has_data = True
-                norm_sdt = convert_phone_number(sdt)  # <-- chuẩn hoá số trước khi thao tác DB
-                phoneCheckInfo_exists = session.query(PhoneCheckInfo).filter_by(sdt=norm_sdt).first()
+        for sdt in phone:
+            has_data = True
+            norm_sdt = convert_phone_number(sdt)  # Chuẩn hoá số
 
-                if phoneCheckInfo_exists == None:
-                    phoneCheckInfo = PhoneCheckInfo(
-                        file_name=file_name,
-                        sdt=norm_sdt,  # <-- lưu số đã chuẩn hoá
-                        import_date=datetime.now(),
-                        status="PENDING",
-                        is_update=0,
-                        run_date=run_date
-                    )
-                    session.add(phoneCheckInfo)
-                    imported_count += 1
-                elif (phoneCheckInfo_exists.run_date > run_date or phoneCheckInfo_exists.run_date + timedelta(days=34) < run_date):
-                # tạo mới record
-                    phoneCheckInfo = PhoneCheckInfo(
-                        file_name=file_name,
-                        sdt=norm_sdt,  # <-- lưu số đã chuẩn hoá
-                        import_date=datetime.now(),
-                        status="PENDING",
-                        is_update=0,
-                        run_date=run_date
-                    )
-                    session.add(phoneCheckInfo)
-                    imported_count += 1
-                elif (phoneCheckInfo_exists.run_date <= run_date <= phoneCheckInfo_exists.run_date + timedelta(days=34)):
-                    print(f"Số điện thoại {norm_sdt} đã tồn tại, bỏ qua")  # <-- in ra số đã chuẩn hoá
-                    phoneExists.append(norm_sdt)  # <-- push số đã chuẩn hoá
+            # 🔍 Kiểm tra trùng trong file
+            if norm_sdt in seen_numbers:
+                print(f"Số điện thoại {norm_sdt} bị trùng trong file, bỏ qua")
+                duplicate_in_file.add(norm_sdt)
+                skipped_count += 1
+                continue
+            else:
+                seen_numbers.add(norm_sdt)
 
-            if phoneExists:
-                return {
-                    "code": 400,
-                    "str" : f"Số điện thoại đã tồn tại",
-                    "phoneExist": phoneExists,
-                    "form": phone
-                }
+            # 🟢 Không còn kiểm tra trùng trong DB
+            phoneCheckInfo = PhoneCheckInfo(
+                file_name=file_name,
+                sdt=norm_sdt,
+                import_date=datetime.now(),
+                status="PENDING",
+                is_update=0,
+                run_date=run_date
+            )
+            session.add(phoneCheckInfo)
+            imported_count += 1
 
-            if has_data:
-                session.commit()
-                return f"Import file {file_name} thành công"
+        if duplicate_in_file:
+            # Nếu có số trùng trong file
             return {
-                    "code": 400,
-                    "str" :"File CSV không có dữ liệu"
-                    }
+                "code": 400,
+                "msg": "Có số điện thoại bị trùng trong file, bỏ qua",
+                "duplicates": list(duplicate_in_file),
+                "total_imported": imported_count,
+                "total_skipped": skipped_count
+            }
+
+        if has_data:
+            session.commit()
+            return {
+                "code": 200,
+                "msg": f"Import file {file_name} thành công",
+                "total_imported": imported_count
+            }
+        else:
+            return {
+                "code": 400,
+                "msg": "File CSV không có dữ liệu"
+            }
 
     except Exception as e:
         print(f"Error importing jobs from CSV: {e}")
         session.rollback()
-        return { str(e)}
+        return {
+            "code": 500,
+            "msg": str(e)
+        }
     finally:
         session.close()
 
